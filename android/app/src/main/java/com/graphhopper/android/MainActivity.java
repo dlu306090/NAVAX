@@ -22,6 +22,10 @@ import android.widget.EditText;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.content.Context;
+import android.location.Location;
+import android.location.LocationManager;
+import android.location.LocationListener;
 
 import com.graphhopper.GHRequest;
 import com.graphhopper.GHResponse;
@@ -63,12 +67,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements LocationListener {
     private static final int NEW_MENU_ID = Menu.FIRST + 1;
     private MapView mapView;
     private GraphHopper hopper;
     private GeoPoint start;
     private GeoPoint end;
+    private LocationManager locationManager;
+    private MarkerItem locationMarker;
     private Spinner localSpinner;
     private Button localButton;
     private Spinner remoteSpinner;
@@ -82,6 +88,23 @@ public class MainActivity extends Activity {
     private File mapsFolder;
     private ItemizedLayer<MarkerItem> itemizedLayer;
     private PathLayer pathLayer;
+
+    @Override
+    public void onLocationChanged(Location location) {
+        itemizedLayer.removeItem(locationMarker);
+        locationMarker = createMarkerItem(new GeoPoint(location.getLatitude(), location.getLongitude()),
+                R.drawable.marker_icon_current_location);
+        itemizedLayer.addItem(locationMarker);
+        mapView.map().updateMap(true);
+    }
+
+    public void onStatusChanged(String s, int i, Bundle bundle) {}
+
+
+    public void onProviderEnabled(String s) {}
+
+
+    public void onProviderDisabled(String s) {}
 
     protected boolean onLongPress(GeoPoint p) {
         if (!isReady())
@@ -103,9 +126,16 @@ public class MainActivity extends Activity {
         } else {
             start = p;
             end = null;
+
             // remove routing layers
             mapView.map().layers().remove(pathLayer);
             itemizedLayer.removeAllItems();
+
+            // Map position
+            Location lastLocation = getLastBestLocation();
+            GeoPoint locationPoint = new GeoPoint(lastLocation.getLatitude(), lastLocation.getLongitude());
+            locationMarker = createMarkerItem(locationPoint, R.drawable.marker_icon_current_location);
+            itemizedLayer.addItem(locationMarker);
 
             itemizedLayer.addItem(createMarkerItem(start, R.drawable.marker_icon_green));
             mapView.map().updateMap(true);
@@ -121,6 +151,8 @@ public class MainActivity extends Activity {
 
         Tile.SIZE = Tile.calculateTileSize(getResources().getDisplayMetrics().scaledDensity);
         mapView = new MapView(this);
+        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, this);
 
         final EditText input = new EditText(this);
         input.setText(currentArea);
@@ -351,6 +383,32 @@ public class MainActivity extends Activity {
         }.execute();
     }
 
+    /**
+     * @return the last know best location
+     */
+    private Location getLastBestLocation() {
+        Location locationGPS = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+        Location locationNet = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+
+        if (locationGPS == null && locationNet == null)
+            return null;
+        long GPSLocationTime = 0;
+        if (null != locationGPS) { GPSLocationTime = locationGPS.getTime(); }
+
+        long NetLocationTime = 0;
+
+        if (null != locationNet) {
+            NetLocationTime = locationNet.getTime();
+        }
+
+        if ( 0 < GPSLocationTime - NetLocationTime ) {
+            return locationGPS;
+        }
+        else {
+            return locationNet;
+        }
+    }
+
     void loadMap(File areaFolder) {
         logUser("loading map");
 
@@ -365,13 +423,23 @@ public class MainActivity extends Activity {
         mapView.map().layers().add(new BuildingLayer(mapView.map(), l));
         mapView.map().layers().add(new LabelLayer(mapView.map(), l));
 
+        // Map position
+        Location lastLocation = getLastBestLocation();
+        GeoPoint mapCenter;
+        if (lastLocation != null) {
+            mapCenter = new GeoPoint(lastLocation.getLatitude(), lastLocation.getLongitude());
+            mapView.map().setMapPosition(lastLocation.getLatitude(), lastLocation.getLongitude(), 1 << 17);
+        }
+        else {
+            mapCenter = tileSource.getMapInfo().boundingBox.getCenterPoint();
+            mapView.map().setMapPosition(mapCenter.getLatitude(), mapCenter.getLongitude(), 1 << 17);
+        }
+
         // Markers layer
         itemizedLayer = new ItemizedLayer<>(mapView.map(), (MarkerSymbol) null);
+        itemizedLayer.addItem(createMarkerItem(mapCenter, R.drawable.marker_icon_current_location));
         mapView.map().layers().add(itemizedLayer);
 
-        // Map position
-        GeoPoint mapCenter = tileSource.getMapInfo().boundingBox.getCenterPoint();
-        mapView.map().setMapPosition(mapCenter.getLatitude(), mapCenter.getLongitude(), 1 << 15);
 
         setContentView(mapView);
         loadGraphStorage();

@@ -40,24 +40,26 @@ public class DataFlagEncoder extends AbstractFlagEncoder {
 
     private static final Map<String, Double> DEFAULT_SPEEDS = new LinkedHashMap<String, Double>() {
         {
-            put("motorway", 100d);
-            put("motorway_link", 70d);
-            put("motorroad", 90d);
-            put("trunk", 70d);
-            put("trunk_link", 65d);
-            put("primary", 65d);
-            put("primary_link", 60d);
-            put("secondary", 60d);
-            put("secondary_link", 50d);
-            put("tertiary", 50d);
-            put("tertiary_link", 40d);
-            put("unclassified", 30d);
-            put("residential", 30d);
-            put("living_street", 5d);
-            put("service", 20d);
-            put("road", 20d);
-            put("forestry", 15d);
-            put("track", 15d);
+            // put("motorway", 100d);
+            // put("motorway_link", 70d);
+            // put("motorroad", 90d);
+            // put("trunk", 70d);
+            // put("trunk_link", 65d);
+            // put("primary", 65d);
+            // put("primary_link", 60d);
+            // put("secondary", 60d);
+            // put("secondary_link", 50d);
+            // put("tertiary", 50d);
+            // put("tertiary_link", 40d);
+            // put("unclassified", 30d);
+            // put("residential", 30d);
+            // put("living_street", 5d);
+            // put("service", 20d);
+            // put("road", 20d);
+            // put("forestry", 15d);
+            // put("track", 15d);
+            put("footway", 3d);
+            put("steps", 1d);
         }
     };
     private final Map<String, Integer> surfaceMap = new HashMap<>();
