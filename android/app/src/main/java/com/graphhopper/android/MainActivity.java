@@ -1,7 +1,6 @@
 package com.graphhopper.android;
 
 import android.app.Activity;
-import android.app.ProgressDialog;
 import android.content.Intent;
 import android.graphics.Path;
 import android.graphics.drawable.Drawable;
@@ -16,11 +15,9 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.Window;
-import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.EditText;
+import android.widget.CheckBox;
 import android.widget.Spinner;
-import android.widget.TextView;
 import android.widget.Toast;
 import android.content.Context;
 import android.location.Location;
@@ -32,11 +29,9 @@ import com.graphhopper.GHResponse;
 import com.graphhopper.GraphHopper;
 import com.graphhopper.PathWrapper;
 import com.graphhopper.util.Constants;
-import com.graphhopper.util.Helper;
 import com.graphhopper.util.Parameters.Algorithms;
 import com.graphhopper.util.Parameters.Routing;
 import com.graphhopper.util.PointList;
-import com.graphhopper.util.ProgressListener;
 import com.graphhopper.util.StopWatch;
 
 import org.oscim.android.MapView;
@@ -60,12 +55,8 @@ import org.oscim.theme.VtmThemes;
 import org.oscim.tiling.source.mapfile.MapFileTileSource;
 
 import java.io.File;
-import java.io.FilenameFilter;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
 
 public class MainActivity extends Activity implements LocationListener {
     private static final int NEW_MENU_ID = Menu.FIRST + 1;
@@ -75,16 +66,14 @@ public class MainActivity extends Activity implements LocationListener {
     private GeoPoint end;
     private LocationManager locationManager;
     private MarkerItem locationMarker;
-    private Spinner localSpinner;
-    private Button localButton;
-    private Spinner remoteSpinner;
-    private Button remoteButton;
-    private volatile boolean prepareInProgress = false;
+    private volatile boolean prepareInProgress = true;
     private volatile boolean shortestPathRunning = false;
-    private String currentArea = "berlin";
+    private boolean isCheckedSteps;
+    private boolean isCheckedUpaths;
+    private boolean isCheckedInclines;
+    private String inclineValue;
+    private String currentArea = "new-jersey";
     private String fileListURL = "http://download2.graphhopper.com/public/maps/" + Constants.getMajorVersion() + "/";
-    private String prefixURL = fileListURL;
-    private String downloadURL;
     private File mapsFolder;
     private ItemizedLayer<MarkerItem> itemizedLayer;
     private PathLayer pathLayer;
@@ -100,9 +89,7 @@ public class MainActivity extends Activity implements LocationListener {
 
     public void onStatusChanged(String s, int i, Bundle bundle) {}
 
-
     public void onProviderEnabled(String s) {}
-
 
     public void onProviderDisabled(String s) {}
 
@@ -134,8 +121,8 @@ public class MainActivity extends Activity implements LocationListener {
             // Map position
             Location lastLocation = getLastBestLocation();
             GeoPoint locationPoint = new GeoPoint(lastLocation.getLatitude(), lastLocation.getLongitude());
-            locationMarker = createMarkerItem(locationPoint, R.drawable.marker_icon_current_location);
-            itemizedLayer.addItem(locationMarker);
+//            locationMarker = createMarkerItem(locationPoint, R.drawable.marker_icon_current_location); --- put back after MS
+//            itemizedLayer.addItem(locationMarker); --- put back after MS
 
             itemizedLayer.addItem(createMarkerItem(start, R.drawable.marker_icon_green));
             mapView.map().updateMap(true);
@@ -147,19 +134,17 @@ public class MainActivity extends Activity implements LocationListener {
     protected void onCreate(Bundle savedInstanceState) {
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.main);
+        setContentView(R.layout.main2);
 
         Tile.SIZE = Tile.calculateTileSize(getResources().getDisplayMetrics().scaledDensity);
         mapView = new MapView(this);
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, this);
 
-        final EditText input = new EditText(this);
-        input.setText(currentArea);
         boolean greaterOrEqKitkat = Build.VERSION.SDK_INT >= 19;
         if (greaterOrEqKitkat) {
             if (!Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
-                logUser("GraphHopper is not usable without an external storage!");
+                logUser("NAVAX is not usable without an external storage!");
                 return;
             }
             mapsFolder = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
@@ -167,20 +152,19 @@ public class MainActivity extends Activity implements LocationListener {
         } else
             mapsFolder = new File(Environment.getExternalStorageDirectory(), "/graphhopper/maps/");
 
-        if (!mapsFolder.exists())
-            mapsFolder.mkdirs();
-
-        TextView welcome = (TextView) findViewById(R.id.welcome);
-        welcome.setText("Welcome to GraphHopper " + Constants.VERSION + "!");
-        welcome.setPadding(6, 3, 3, 3);
-        localSpinner = (Spinner) findViewById(R.id.locale_area_spinner);
-        localButton = (Button) findViewById(R.id.locale_button);
-        remoteSpinner = (Spinner) findViewById(R.id.remote_area_spinner);
-        remoteButton = (Button) findViewById(R.id.remote_button);
-        // TODO get user confirmation to download
-        // if (AndroidHelper.isFastDownload(this))
-        chooseAreaFromRemote();
-        chooseAreaFromLocal();
+        Button button = (Button) findViewById(R.id.start_button);
+        button.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                isCheckedSteps = ((CheckBox)findViewById(R.id.steps)).isChecked();
+                isCheckedUpaths = ((CheckBox)findViewById(R.id.unpaved_paths)).isChecked();
+                isCheckedInclines = ((CheckBox)findViewById(R.id.inclines)).isChecked();
+                inclineValue = ((Spinner) findViewById(R.id.inclines_spinner))
+                        .getSelectedItem().toString();
+                        File areaFolder = new File(mapsFolder, currentArea + "-gh");
+                loadMap(areaFolder);
+            }
+        });
     }
 
     @Override
@@ -218,170 +202,63 @@ public class MainActivity extends Activity implements LocationListener {
             logUser("Preparation still in progress");
             return false;
         }
-        logUser("Prepare finished but hopper not ready. This happens when there was an error while loading the files");
+        logUser("Prepare finished but app not ready. This happens when there was an error while loading the files.");
         return false;
     }
 
-    private void initFiles(String area) {
-        prepareInProgress = true;
-        currentArea = area;
-        downloadingFiles();
-    }
+//    private void chooseAreaFromLocal() {
+//        List<String> nameList = new ArrayList<>();
+//        String[] files = mapsFolder.list(new FilenameFilter() {
+//            @Override
+//            public boolean accept(File dir, String filename) {
+//                return filename != null
+//                        && (filename.endsWith(".ghz") || filename
+//                        .endsWith("-gh"));
+//            }
+//        });
+//        Collections.addAll(nameList, files);
+//
+//        if (nameList.isEmpty())
+//            return;
+//
+//        chooseArea(localButton, localSpinner, nameList,
+//                new MySpinnerListener() {
+//                    @Override
+//                    public void onSelect(String selectedArea, String selectedFile) {
+//                        initFiles(selectedArea);
+//                    }
+//                });
+//    }
 
-    private void chooseAreaFromLocal() {
-        List<String> nameList = new ArrayList<>();
-        String[] files = mapsFolder.list(new FilenameFilter() {
-            @Override
-            public boolean accept(File dir, String filename) {
-                return filename != null
-                        && (filename.endsWith(".ghz") || filename
-                        .endsWith("-gh"));
-            }
-        });
-        Collections.addAll(nameList, files);
-
-        if (nameList.isEmpty())
-            return;
-
-        chooseArea(localButton, localSpinner, nameList,
-                new MySpinnerListener() {
-                    @Override
-                    public void onSelect(String selectedArea, String selectedFile) {
-                        initFiles(selectedArea);
-                    }
-                });
-    }
-
-    private void chooseAreaFromRemote() {
-        new GHAsyncTask<Void, Void, List<String>>() {
-            protected List<String> saveDoInBackground(Void... params)
-                    throws Exception {
-                String[] lines = new AndroidDownloader().downloadAsString(fileListURL, false).split("\n");
-                List<String> res = new ArrayList<>();
-                for (String str : lines) {
-                    int index = str.indexOf("href=\"");
-                    if (index >= 0) {
-                        index += 6;
-                        int lastIndex = str.indexOf(".ghz", index);
-                        if (lastIndex >= 0)
-                            res.add(prefixURL + str.substring(index, lastIndex)
-                                    + ".ghz");
-                    }
-                }
-
-                return res;
-            }
-
-            @Override
-            protected void onPostExecute(List<String> nameList) {
-                if (hasError()) {
-                    getError().printStackTrace();
-                    logUser("Are you connected to the internet? Problem while fetching remote area list: "
-                            + getErrorMessage());
-                    return;
-                } else if (nameList == null || nameList.isEmpty()) {
-                    logUser("No maps created for your version!? " + fileListURL);
-                    return;
-                }
-
-                MySpinnerListener spinnerListener = new MySpinnerListener() {
-                    @Override
-                    public void onSelect(String selectedArea, String selectedFile) {
-                        if (selectedFile == null
-                                || new File(mapsFolder, selectedArea + ".ghz").exists()
-                                || new File(mapsFolder, selectedArea + "-gh").exists()) {
-                            downloadURL = null;
-                        } else {
-                            downloadURL = selectedFile;
-                        }
-                        initFiles(selectedArea);
-                    }
-                };
-                chooseArea(remoteButton, remoteSpinner, nameList,
-                        spinnerListener);
-            }
-        }.execute();
-    }
-
-    private void chooseArea(Button button, final Spinner spinner,
-                            List<String> nameList, final MySpinnerListener myListener) {
-        final Map<String, String> nameToFullName = new TreeMap<>();
-        for (String fullName : nameList) {
-            String tmp = Helper.pruneFileEnd(fullName);
-            if (tmp.endsWith("-gh"))
-                tmp = tmp.substring(0, tmp.length() - 3);
-
-            tmp = AndroidHelper.getFileName(tmp);
-            nameToFullName.put(tmp, fullName);
-        }
-        nameList.clear();
-        nameList.addAll(nameToFullName.keySet());
-        ArrayAdapter<String> spinnerArrayAdapter = new ArrayAdapter<>(
-                this, android.R.layout.simple_spinner_dropdown_item, nameList);
-        spinner.setAdapter(spinnerArrayAdapter);
-        button.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Object o = spinner.getSelectedItem();
-                if (o != null && o.toString().length() > 0 && !nameToFullName.isEmpty()) {
-                    String area = o.toString();
-                    myListener.onSelect(area, nameToFullName.get(area));
-                } else {
-                    myListener.onSelect(null, null);
-                }
-            }
-        });
-    }
-
-    void downloadingFiles() {
-        final File areaFolder = new File(mapsFolder, currentArea + "-gh");
-        if (downloadURL == null || areaFolder.exists()) {
-            loadMap(areaFolder);
-            return;
-        }
-
-        final ProgressDialog dialog = new ProgressDialog(this);
-        dialog.setMessage("Downloading and uncompressing " + downloadURL);
-        dialog.setIndeterminate(false);
-        dialog.setMax(100);
-        dialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
-        dialog.show();
-
-        new GHAsyncTask<Void, Integer, Object>() {
-            protected Object saveDoInBackground(Void... _ignore)
-                    throws Exception {
-                String localFolder = Helper.pruneFileEnd(AndroidHelper.getFileName(downloadURL));
-                localFolder = new File(mapsFolder, localFolder + "-gh").getAbsolutePath();
-                log("downloading & unzipping " + downloadURL + " to " + localFolder);
-                AndroidDownloader downloader = new AndroidDownloader();
-                downloader.setTimeout(30000);
-                downloader.downloadAndUnzip(downloadURL, localFolder,
-                        new ProgressListener() {
-                            @Override
-                            public void update(long val) {
-                                publishProgress((int) val);
-                            }
-                        });
-                return null;
-            }
-
-            protected void onProgressUpdate(Integer... values) {
-                super.onProgressUpdate(values);
-                dialog.setProgress(values[0]);
-            }
-
-            protected void onPostExecute(Object _ignore) {
-                dialog.dismiss();
-                if (hasError()) {
-                    String str = "An error happened while retrieving maps:" + getErrorMessage();
-                    log(str, getError());
-                    logUser(str);
-                } else {
-                    loadMap(areaFolder);
-                }
-            }
-        }.execute();
-    }
+//    private void chooseArea(Button button, final Spinner spinner,
+//                            List<String> nameList, final MySpinnerListener myListener) {
+//        final Map<String, String> nameToFullName = new TreeMap<>();
+//        for (String fullName : nameList) {
+//            String tmp = Helper.pruneFileEnd(fullName);
+//            if (tmp.endsWith("-gh"))
+//                tmp = tmp.substring(0, tmp.length() - 3);
+//
+//            tmp = AndroidHelper.getFileName(tmp);
+//            nameToFullName.put(tmp, fullName);
+//        }
+//        nameList.clear();
+//        nameList.addAll(nameToFullName.keySet());
+//        ArrayAdapter<String> spinnerArrayAdapter = new ArrayAdapter<>(
+//                this, android.R.layout.simple_spinner_dropdown_item, nameList);
+//        spinner.setAdapter(spinnerArrayAdapter);
+//        button.setOnClickListener(new OnClickListener() {
+//            @Override
+//            public void onClick(View v) {
+//                Object o = spinner.getSelectedItem();
+//                if (o != null && o.toString().length() > 0 && !nameToFullName.isEmpty()) {
+//                    String area = o.toString();
+//                    myListener.onSelect(area, nameToFullName.get(area));
+//                } else {
+//                    myListener.onSelect(null, null);
+//                }
+//            }
+//        });
+//    }
 
     /**
      * @return the last know best location
@@ -424,20 +301,23 @@ public class MainActivity extends Activity implements LocationListener {
         mapView.map().layers().add(new LabelLayer(mapView.map(), l));
 
         // Map position
-        Location lastLocation = getLastBestLocation();
-        GeoPoint mapCenter;
-        if (lastLocation != null) {
-            mapCenter = new GeoPoint(lastLocation.getLatitude(), lastLocation.getLongitude());
-            mapView.map().setMapPosition(lastLocation.getLatitude(), lastLocation.getLongitude(), 1 << 17);
-        }
-        else {
-            mapCenter = tileSource.getMapInfo().boundingBox.getCenterPoint();
-            mapView.map().setMapPosition(mapCenter.getLatitude(), mapCenter.getLongitude(), 1 << 17);
-        }
+//        Location lastLocation = getLastBestLocation();
+//        GeoPoint mapCenter;
+//        if (lastLocation != null) {
+//            mapCenter = new GeoPoint(lastLocation.getLatitude(), lastLocation.getLongitude());
+//            mapView.map().setMapPosition(lastLocation.getLatitude(), lastLocation.getLongitude(), 1 << 17);
+//        }
+//        else {
+//            mapCenter = tileSource.getMapInfo().boundingBox.getCenterPoint();
+//            mapView.map().setMapPosition(mapCenter.getLatitude(), mapCenter.getLongitude(), 1 << 17);
+//        }
+
+        // Map fixed position
+        mapView.map().setMapPosition(40.34648, -74.658457, 1 << 17);
 
         // Markers layer
         itemizedLayer = new ItemizedLayer<>(mapView.map(), (MarkerSymbol) null);
-        itemizedLayer.addItem(createMarkerItem(mapCenter, R.drawable.marker_icon_current_location));
+//        itemizedLayer.addItem(createMarkerItem(mapCenter, R.drawable.marker_icon_current_location)); --- put back after MS
         mapView.map().layers().add(itemizedLayer);
 
 
@@ -511,6 +391,14 @@ public class MainActivity extends Activity implements LocationListener {
                         setAlgorithm(Algorithms.DIJKSTRA_BI);
                 req.getHints().
                         put(Routing.INSTRUCTIONS, "false");
+                if (isCheckedSteps) {
+                    req.getHints().put("highways.steps", "0");
+                }
+                if (isCheckedUpaths) {
+
+                }
+                if (isCheckedInclines) {}
+
                 GHResponse resp = hopper.route(req);
                 time = sw.stop().getSeconds();
                 return resp.getBest();

@@ -1,6 +1,17 @@
 <resources>
 
-    <string name="app_name">GraphHopper</string>
-    <string name="title_activity_main">GraphHopper</string>
- 
+    <string name="app_name">NAVAX</string>
+    <string name="title_activity_main">NAVAX</string>
+
+    <string name="incline_prompt">Choose an incline</string>
+    <string-array name="incline_arrays">
+        <item>5 degrees</item>
+        <item>10 degrees</item>
+        <item>15 degrees</item>
+        <item>20 degrees</item>
+        <item>25 degrees</item>
+        <item>30 degrees</item>
+        <item>35 degrees</item>
+        <item>40 degrees</item>
+    </string-array>
 </resources>
