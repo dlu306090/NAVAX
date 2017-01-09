@@ -14,4 +14,10 @@
         <item>35 degrees</item>
         <item>40 degrees</item>
     </string-array>
+
+    <string name="path_width_prompt">Choose an width</string>
+    <string-array name="path_width_arrays">
+        <item>1 meter</item>
+        <item>2 meters</item>
+    </string-array>
 </resources>

@@ -28,7 +28,16 @@ import com.graphhopper.GHRequest;
 import com.graphhopper.GHResponse;
 import com.graphhopper.GraphHopper;
 import com.graphhopper.PathWrapper;
+import com.graphhopper.reader.dem.ElevationProvider;
+import com.graphhopper.reader.dem.SRTMProvider;
+import com.graphhopper.routing.util.AllEdgesIterator;
+import com.graphhopper.routing.util.DataFlagEncoder;
+import com.graphhopper.routing.util.EncodingManager;
+import com.graphhopper.storage.Graph;
+import com.graphhopper.storage.NodeAccess;
 import com.graphhopper.util.Constants;
+import com.graphhopper.util.EdgeIteratorState;
+import com.graphhopper.util.GHUtility;
 import com.graphhopper.util.Parameters.Algorithms;
 import com.graphhopper.util.Parameters.Routing;
 import com.graphhopper.util.PointList;
@@ -70,10 +79,8 @@ public class MainActivity extends Activity implements LocationListener {
     private volatile boolean shortestPathRunning = false;
     private boolean isCheckedSteps;
     private boolean isCheckedUpaths;
-    private boolean isCheckedInclines;
-    private String inclineValue;
+    private int inclineValue = 0;
     private String currentArea = "new-jersey";
-    private String fileListURL = "http://download2.graphhopper.com/public/maps/" + Constants.getMajorVersion() + "/";
     private File mapsFolder;
     private ItemizedLayer<MarkerItem> itemizedLayer;
     private PathLayer pathLayer;
@@ -121,8 +128,8 @@ public class MainActivity extends Activity implements LocationListener {
             // Map position
             Location lastLocation = getLastBestLocation();
             GeoPoint locationPoint = new GeoPoint(lastLocation.getLatitude(), lastLocation.getLongitude());
-//            locationMarker = createMarkerItem(locationPoint, R.drawable.marker_icon_current_location); --- put back after MS
-//            itemizedLayer.addItem(locationMarker); --- put back after MS
+            locationMarker = createMarkerItem(locationPoint, R.drawable.marker_icon_current_location);
+            itemizedLayer.addItem(locationMarker);
 
             itemizedLayer.addItem(createMarkerItem(start, R.drawable.marker_icon_green));
             mapView.map().updateMap(true);
@@ -158,10 +165,10 @@ public class MainActivity extends Activity implements LocationListener {
             public void onClick(View v) {
                 isCheckedSteps = ((CheckBox)findViewById(R.id.steps)).isChecked();
                 isCheckedUpaths = ((CheckBox)findViewById(R.id.unpaved_paths)).isChecked();
-                isCheckedInclines = ((CheckBox)findViewById(R.id.inclines)).isChecked();
-                inclineValue = ((Spinner) findViewById(R.id.inclines_spinner))
-                        .getSelectedItem().toString();
-                        File areaFolder = new File(mapsFolder, currentArea + "-gh");
+                if (((CheckBox)findViewById(R.id.inclines)).isChecked())
+                    inclineValue = Integer.parseInt(((Spinner) findViewById(R.id.inclines_spinner))
+                            .getSelectedItem().toString().split("\\s")[0]);
+                File areaFolder = new File(mapsFolder, currentArea + "-gh");
                 loadMap(areaFolder);
             }
         });
@@ -301,23 +308,23 @@ public class MainActivity extends Activity implements LocationListener {
         mapView.map().layers().add(new LabelLayer(mapView.map(), l));
 
         // Map position
-//        Location lastLocation = getLastBestLocation();
-//        GeoPoint mapCenter;
-//        if (lastLocation != null) {
-//            mapCenter = new GeoPoint(lastLocation.getLatitude(), lastLocation.getLongitude());
-//            mapView.map().setMapPosition(lastLocation.getLatitude(), lastLocation.getLongitude(), 1 << 17);
-//        }
-//        else {
-//            mapCenter = tileSource.getMapInfo().boundingBox.getCenterPoint();
-//            mapView.map().setMapPosition(mapCenter.getLatitude(), mapCenter.getLongitude(), 1 << 17);
-//        }
-
-        // Map fixed position
-        mapView.map().setMapPosition(40.34648, -74.658457, 1 << 17);
+        Location lastLocation = getLastBestLocation();
+        GeoPoint mapCenter;
+        if (lastLocation != null) {
+            mapCenter = new GeoPoint(lastLocation.getLatitude(), lastLocation.getLongitude());
+            mapView.map().setMapPosition(lastLocation.getLatitude(), lastLocation.getLongitude(), 1 << 17);
+        }
+        else {
+            mapCenter = tileSource.getMapInfo().boundingBox.getCenterPoint();
+            mapView.map().setMapPosition(mapCenter.getLatitude(), mapCenter.getLongitude(), 1 << 17);
+        }
+//
+//        // Map fixed position
+//        mapView.map().setMapPosition(40.34648, -74.658457, 1 << 17);
 
         // Markers layer
         itemizedLayer = new ItemizedLayer<>(mapView.map(), (MarkerSymbol) null);
-//        itemizedLayer.addItem(createMarkerItem(mapCenter, R.drawable.marker_icon_current_location)); --- put back after MS
+        itemizedLayer.addItem(createMarkerItem(mapCenter, R.drawable.marker_icon_current_location));
         mapView.map().layers().add(itemizedLayer);
 
 
@@ -330,8 +337,34 @@ public class MainActivity extends Activity implements LocationListener {
         new GHAsyncTask<Void, Void, Path>() {
             protected Path saveDoInBackground(Void... v) throws Exception {
                 GraphHopper tmpHopp = new GraphHopper().forMobile();
+                SRTMProvider srtmProvider = new SRTMProvider();
+                tmpHopp.setElevation(true);
+                tmpHopp.setElevationProvider(srtmProvider);
+                tmpHopp.setEncodingManager(new EncodingManager("generic"));
+                tmpHopp.setCHEnabled(false);
                 tmpHopp.load(new File(mapsFolder, currentArea).getAbsolutePath() + "-gh");
                 log("found graph " + tmpHopp.getGraphHopperStorage().toString() + ", nodes:" + tmpHopp.getGraphHopperStorage().getNodes());
+                DataFlagEncoder dataFlagEncoder = (DataFlagEncoder) tmpHopp.getGraphHopperStorage()
+                        .getEncodingManager().getEncoder("generic");
+                AllEdgesIterator edges = tmpHopp.getGraphHopperStorage().getAllEdges();
+                while (edges.next()) {
+                    String highway = dataFlagEncoder.getHighwayAsString(edges);
+                    String surface = dataFlagEncoder.getSurfaceAsString(edges);
+                    NodeAccess nodeAccess = tmpHopp.getGraphHopperStorage().getNodeAccess();
+                    double elevation1 = nodeAccess.getElevation(edges.getBaseNode());
+                    double elevation2 = nodeAccess.getElevation(edges.getAdjNode());
+                    if ((Math.atan(Math.abs((elevation2 - elevation1)
+                            / edges.getDistance())) * 180 / Math.PI) < ((double) inclineValue)
+                            || highway == "steps" && isCheckedSteps
+                            || surface == "gravel" && isCheckedUpaths) {
+                        edges.setDistance(Integer.MAX_VALUE);
+                    }
+                }
+                AllEdgesIterator edges2 = tmpHopp.getGraphHopperStorage().getAllEdges();
+                while (edges2.next()) {
+                    if (edges2.getDistance() == Integer.MAX_VALUE)
+                        log("found steps");
+                }
                 hopper = tmpHopp;
                 return null;
             }
@@ -391,16 +424,20 @@ public class MainActivity extends Activity implements LocationListener {
                         setAlgorithm(Algorithms.DIJKSTRA_BI);
                 req.getHints().
                         put(Routing.INSTRUCTIONS, "false");
-                if (isCheckedSteps) {
-                    req.getHints().put("highways.steps", "0");
-                }
-                if (isCheckedUpaths) {
+                req.setVehicle("generic");
+                req.setLocale("en-US");
 
-                }
-                if (isCheckedInclines) {}
+//                if (isCheckedSteps) {
+//                    req.getHints().put("highways.steps", "0");
+//                }
+//                if (isCheckedUpaths) {
+//
+//                }
 
                 GHResponse resp = hopper.route(req);
                 time = sw.stop().getSeconds();
+                log(resp.getDebugInfo());
+                shortestPathRunning = false;
                 return resp.getBest();
             }
 

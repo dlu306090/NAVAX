@@ -52,9 +52,9 @@ public class DataFlagEncoder extends AbstractFlagEncoder {
             // put("tertiary", 50d);
             // put("tertiary_link", 40d);
             // put("unclassified", 30d);
-            // put("residential", 30d);
+            put("residential", 3d);
             // put("living_street", 5d);
-            // put("service", 20d);
+            put("service", 3d);
             // put("road", 20d);
             // put("forestry", 15d);
             // put("track", 15d);
