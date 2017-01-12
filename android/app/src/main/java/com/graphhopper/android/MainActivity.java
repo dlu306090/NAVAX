@@ -1,9 +1,13 @@
 package com.graphhopper.android;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Path;
 import android.graphics.drawable.Drawable;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
@@ -19,30 +23,24 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.Spinner;
 import android.widget.Toast;
-import android.content.Context;
-import android.location.Location;
-import android.location.LocationManager;
-import android.location.LocationListener;
 
 import com.graphhopper.GHRequest;
 import com.graphhopper.GHResponse;
 import com.graphhopper.GraphHopper;
 import com.graphhopper.PathWrapper;
-import com.graphhopper.reader.dem.ElevationProvider;
 import com.graphhopper.reader.dem.SRTMProvider;
 import com.graphhopper.routing.util.AllEdgesIterator;
 import com.graphhopper.routing.util.DataFlagEncoder;
 import com.graphhopper.routing.util.EncodingManager;
-import com.graphhopper.storage.Graph;
+import com.graphhopper.storage.GraphHopperStorage;
 import com.graphhopper.storage.NodeAccess;
 import com.graphhopper.util.Constants;
-import com.graphhopper.util.EdgeIteratorState;
-import com.graphhopper.util.GHUtility;
 import com.graphhopper.util.Parameters.Algorithms;
 import com.graphhopper.util.Parameters.Routing;
 import com.graphhopper.util.PointList;
 import com.graphhopper.util.StopWatch;
 
+import org.apache.commons.io.FileUtils;
 import org.oscim.android.MapView;
 import org.oscim.android.canvas.AndroidGraphics;
 import org.oscim.backend.canvas.Bitmap;
@@ -65,6 +63,7 @@ import org.oscim.tiling.source.mapfile.MapFileTileSource;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class MainActivity extends Activity implements LocationListener {
@@ -77,9 +76,9 @@ public class MainActivity extends Activity implements LocationListener {
     private MarkerItem locationMarker;
     private volatile boolean prepareInProgress = true;
     private volatile boolean shortestPathRunning = false;
-    private boolean isCheckedSteps;
-    private boolean isCheckedUpaths;
-    private int inclineValue = 0;
+    private boolean isCheckedSteps = false;
+    private boolean isCheckedUpaths = false;
+    private int inclineValue = 90;
     private String currentArea = "new-jersey";
     private File mapsFolder;
     private ItemizedLayer<MarkerItem> itemizedLayer;
@@ -213,60 +212,6 @@ public class MainActivity extends Activity implements LocationListener {
         return false;
     }
 
-//    private void chooseAreaFromLocal() {
-//        List<String> nameList = new ArrayList<>();
-//        String[] files = mapsFolder.list(new FilenameFilter() {
-//            @Override
-//            public boolean accept(File dir, String filename) {
-//                return filename != null
-//                        && (filename.endsWith(".ghz") || filename
-//                        .endsWith("-gh"));
-//            }
-//        });
-//        Collections.addAll(nameList, files);
-//
-//        if (nameList.isEmpty())
-//            return;
-//
-//        chooseArea(localButton, localSpinner, nameList,
-//                new MySpinnerListener() {
-//                    @Override
-//                    public void onSelect(String selectedArea, String selectedFile) {
-//                        initFiles(selectedArea);
-//                    }
-//                });
-//    }
-
-//    private void chooseArea(Button button, final Spinner spinner,
-//                            List<String> nameList, final MySpinnerListener myListener) {
-//        final Map<String, String> nameToFullName = new TreeMap<>();
-//        for (String fullName : nameList) {
-//            String tmp = Helper.pruneFileEnd(fullName);
-//            if (tmp.endsWith("-gh"))
-//                tmp = tmp.substring(0, tmp.length() - 3);
-//
-//            tmp = AndroidHelper.getFileName(tmp);
-//            nameToFullName.put(tmp, fullName);
-//        }
-//        nameList.clear();
-//        nameList.addAll(nameToFullName.keySet());
-//        ArrayAdapter<String> spinnerArrayAdapter = new ArrayAdapter<>(
-//                this, android.R.layout.simple_spinner_dropdown_item, nameList);
-//        spinner.setAdapter(spinnerArrayAdapter);
-//        button.setOnClickListener(new OnClickListener() {
-//            @Override
-//            public void onClick(View v) {
-//                Object o = spinner.getSelectedItem();
-//                if (o != null && o.toString().length() > 0 && !nameToFullName.isEmpty()) {
-//                    String area = o.toString();
-//                    myListener.onSelect(area, nameToFullName.get(area));
-//                } else {
-//                    myListener.onSelect(null, null);
-//                }
-//            }
-//        });
-//    }
-
     /**
      * @return the last know best location
      */
@@ -327,7 +272,6 @@ public class MainActivity extends Activity implements LocationListener {
         itemizedLayer.addItem(createMarkerItem(mapCenter, R.drawable.marker_icon_current_location));
         mapView.map().layers().add(itemizedLayer);
 
-
         setContentView(mapView);
         loadGraphStorage();
     }
@@ -336,34 +280,58 @@ public class MainActivity extends Activity implements LocationListener {
         logUser("loading graph (" + Constants.VERSION + ") ... ");
         new GHAsyncTask<Void, Void, Path>() {
             protected Path saveDoInBackground(Void... v) throws Exception {
+                try {
+                    FileUtils.deleteDirectory(new File (new File(mapsFolder, currentArea).getAbsolutePath() + "-gh2"));
+                    log("delete worked");
+                } catch (IllegalArgumentException a) {
+                    log("delete didn't work");
+                    log(a.toString());
+                }
+                try {
+                    FileUtils.copyDirectory(new File (new File(mapsFolder, currentArea).getAbsolutePath() + "-gh"),
+                            new File (new File(mapsFolder, currentArea).getAbsolutePath() + "-gh2"));
+                    log("it worked");
+                    log(Long.toString(FileUtils.sizeOf(new File (new File(mapsFolder, currentArea).getAbsolutePath() + "-gh2"))));
+                    log(new File (new File(mapsFolder, currentArea).getAbsolutePath() + "-gh2").getAbsolutePath());
+                } catch (IllegalArgumentException a) {
+                    log("it didn't work");
+                }
                 GraphHopper tmpHopp = new GraphHopper().forMobile();
                 SRTMProvider srtmProvider = new SRTMProvider();
                 tmpHopp.setElevation(true);
                 tmpHopp.setElevationProvider(srtmProvider);
                 tmpHopp.setEncodingManager(new EncodingManager("generic"));
                 tmpHopp.setCHEnabled(false);
-                tmpHopp.load(new File(mapsFolder, currentArea).getAbsolutePath() + "-gh");
+                tmpHopp.load(new File(mapsFolder, currentArea).getAbsolutePath() + "-gh2");
                 log("found graph " + tmpHopp.getGraphHopperStorage().toString() + ", nodes:" + tmpHopp.getGraphHopperStorage().getNodes());
                 DataFlagEncoder dataFlagEncoder = (DataFlagEncoder) tmpHopp.getGraphHopperStorage()
                         .getEncodingManager().getEncoder("generic");
-                AllEdgesIterator edges = tmpHopp.getGraphHopperStorage().getAllEdges();
+                GraphHopperStorage graphHopperStorage = tmpHopp.getGraphHopperStorage();
+                AllEdgesIterator edges = graphHopperStorage.getAllEdges();
+                String [] surfaceTypes = new String [] {"paved", "asphalt", "sett", "concrete",
+                        "concrete:lanes", "concrete:plates", "paving_stones", "metal", "wood"};
+                List<String> surfaceTypesList = new ArrayList(Arrays.asList(surfaceTypes));
                 while (edges.next()) {
                     String highway = dataFlagEncoder.getHighwayAsString(edges);
                     String surface = dataFlagEncoder.getSurfaceAsString(edges);
                     NodeAccess nodeAccess = tmpHopp.getGraphHopperStorage().getNodeAccess();
                     double elevation1 = nodeAccess.getElevation(edges.getBaseNode());
                     double elevation2 = nodeAccess.getElevation(edges.getAdjNode());
-                    if ((Math.atan(Math.abs((elevation2 - elevation1)
-                            / edges.getDistance())) * 180 / Math.PI) < ((double) inclineValue)
-                            || highway == "steps" && isCheckedSteps
-                            || surface == "gravel" && isCheckedUpaths) {
-                        edges.setDistance(Integer.MAX_VALUE);
+                    if (((Math.atan(Math.abs((elevation2 - elevation1)
+                            / edges.getDistance())) * 180 / Math.PI) > ((double) inclineValue))
+                            || (highway == "steps" && isCheckedSteps)
+                            || (surface != null && !surfaceTypesList.contains(surface) && isCheckedUpaths)) {
+//                        edges.setDistance(Double.POSITIVE_INFINITY);
+                        long flags = edges.getFlags();
+//                        edges.setFlags(dataFlagEncoder.setAccess(flags, false, false));
+                        edges.setFlags(dataFlagEncoder.setEdgeNoAccess(flags));
+                        log("found incline");
+                        double a = (Math.atan(Math.abs((elevation2 - elevation1) / edges.getDistance())) * 180 / Math.PI);
+                        log(Double.toString(a));
+                        log(Double.toString((double) inclineValue));
+//                        EdgeIteratorState state2 = tmpHopp.getGraphHopperStorage().getBaseGraph().getEdgeIteratorState(edges.getEdge(), edges.getAdjNode());
+//                        log("state is: " + state2.getDistance());
                     }
-                }
-                AllEdgesIterator edges2 = tmpHopp.getGraphHopperStorage().getAllEdges();
-                while (edges2.next()) {
-                    if (edges2.getDistance() == Integer.MAX_VALUE)
-                        log("found steps");
                 }
                 hopper = tmpHopp;
                 return null;
@@ -427,12 +395,10 @@ public class MainActivity extends Activity implements LocationListener {
                 req.setVehicle("generic");
                 req.setLocale("en-US");
 
-//                if (isCheckedSteps) {
-//                    req.getHints().put("highways.steps", "0");
-//                }
-//                if (isCheckedUpaths) {
-//
-//                }
+//                  req.getHints().put("highways.steps", "0");
+                req.getHints().put("isCheckedSteps", isCheckedSteps);
+                req.getHints().put("isCheckedUpaths", isCheckedUpaths);
+                req.getHints().put("inclineValue", inclineValue);
 
                 GHResponse resp = hopper.route(req);
                 time = sw.stop().getSeconds();
